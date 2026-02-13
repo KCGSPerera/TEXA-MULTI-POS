@@ -17,6 +17,15 @@ func (n noopAudit) Log(ctx context.Context, tx pgx.Tx, entityName, entityID, act
 	return nil
 }
 
+type noopLedger struct{}
+
+func (n noopLedger) Post(ctx context.Context, tx pgx.Tx, branchID, referenceType, referenceID string, lines []models.JournalLineInput, performedBy *string) error {
+	return nil
+}
+func (n noopLedger) PostByCodes(ctx context.Context, tx pgx.Tx, branchID, referenceType, referenceID string, lines []LedgerLineByCode, performedBy *string) error {
+	return nil
+}
+
 type saleRepoStub struct {
 	existing    *models.Sale
 	createCalls int
@@ -34,6 +43,9 @@ func (s *saleRepoStub) CreateSalePaymentsTx(ctx context.Context, tx pgx.Tx, sale
 }
 func (s *saleRepoStub) GetByIdempotencyKey(ctx context.Context, branchID, idempotencyKey string) (*models.Sale, error) {
 	return s.existing, nil
+}
+func (s *saleRepoStub) GetByIDTx(ctx context.Context, tx pgx.Tx, branchID, saleID string) (*models.Sale, error) {
+	return nil, nil
 }
 
 type productRepoStub struct{ exists bool }
@@ -187,6 +199,7 @@ func TestApproveGRNIncrementsInventory(t *testing.T) {
 	svc := &purchaseService{
 		purchaseRepo:  pr,
 		inventoryRepo: ir,
+		ledgerSvc:     noopLedger{},
 		auditService:  noopAudit{},
 		txRunner: func(ctx context.Context, fn func(pgx.Tx) error) error {
 			return fn(nil)

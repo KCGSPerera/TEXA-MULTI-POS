@@ -8,6 +8,7 @@ type AuditLog struct {
 	EntityID    string    `json:"entity_id"`
 	Action      string    `json:"action"`
 	PerformedBy *string   `json:"performed_by,omitempty"`
+	RequestID   *string   `json:"request_id,omitempty"`
 	OldData     []byte    `json:"old_data,omitempty"`
 	NewData     []byte    `json:"new_data,omitempty"`
 	CreatedAt   time.Time `json:"created_at"`

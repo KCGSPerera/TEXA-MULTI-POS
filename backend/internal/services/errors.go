@@ -9,4 +9,5 @@ var (
 	ErrForbiddenOperation    = errors.New("forbidden operation")
 	ErrInsufficientInventory = errors.New("insufficient inventory")
 	ErrInvalidPaymentTotal   = errors.New("invalid payment total")
+	ErrLedgerImbalance       = errors.New("ledger entry is not balanced")
 )

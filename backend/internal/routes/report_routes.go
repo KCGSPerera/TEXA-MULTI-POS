@@ -10,6 +10,7 @@ import (
 func RegisterReportRoutes(router *gin.Engine, authz *middleware.AuthorizationMiddleware, jwtMiddleware gin.HandlerFunc, h *handlers.ReportHandler) {
 	group := router.Group("/api/branches/:branch_id/reports")
 	group.Use(jwtMiddleware, authz.RequireBranchMatch("branch_id"), middleware.ValidateUUIDParams("branch_id"))
+	group.Use(authz.RequirePermission("report.view"))
 
 	group.GET("/daily-sales-summary", h.DailySalesSummary)
 	group.GET("/product-sales", h.ProductSalesReport)

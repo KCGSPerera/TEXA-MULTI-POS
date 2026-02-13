@@ -15,10 +15,7 @@ import (
 	"github.com/kcgsperera/texa-multi-pos/backend/internal/repositories"
 )
 
-const (
-	accessTokenTTL  = 15 * time.Minute
-	refreshTokenTTL = 7 * 24 * time.Hour
-)
+const accessTokenTTL = 15 * time.Minute
 
 var (
 	ErrInvalidBranch      = errors.New("invalid branch_id")
@@ -29,19 +26,22 @@ var (
 
 type AuthService interface {
 	Register(ctx context.Context, req models.RegisterRequest) (*models.AuthUserResponse, error)
-	Login(ctx context.Context, req models.LoginRequest) (*models.TokenResponse, error)
+	Login(ctx context.Context, req models.LoginRequest, meta models.TokenMeta) (*models.TokenResponse, error)
+	Refresh(ctx context.Context, req models.RefreshTokenRequest, meta models.TokenMeta) (*models.TokenResponse, error)
+	Logout(ctx context.Context, req models.LogoutRequest) error
 }
 
 type authService struct {
-	userRepo  repositories.UserRepository
-	jwtSecret []byte
+	userRepo     repositories.UserRepository
+	tokenService TokenService
+	jwtSecret    []byte
 }
 
-func NewAuthService(userRepo repositories.UserRepository, jwtSecret string) (AuthService, error) {
+func NewAuthService(userRepo repositories.UserRepository, tokenService TokenService, jwtSecret string) (AuthService, error) {
 	if strings.TrimSpace(jwtSecret) == "" {
 		return nil, errors.New("JWT_SECRET is required")
 	}
-	return &authService{userRepo: userRepo, jwtSecret: []byte(jwtSecret)}, nil
+	return &authService{userRepo: userRepo, tokenService: tokenService, jwtSecret: []byte(jwtSecret)}, nil
 }
 
 func (s *authService) Register(ctx context.Context, req models.RegisterRequest) (*models.AuthUserResponse, error) {
@@ -77,7 +77,7 @@ func (s *authService) Register(ctx context.Context, req models.RegisterRequest) 
 	return &models.AuthUserResponse{ID: user.ID, BranchID: user.BranchID, RoleID: user.RoleID, Name: user.Name, Email: user.Email, MobileNumber: user.MobileNumber, SecondaryMobileNumber: user.SecondaryMobileNumber, NIC: user.NIC, IsActive: user.IsActive, CreatedAt: user.CreatedAt, UpdatedAt: user.UpdatedAt}, nil
 }
 
-func (s *authService) Login(ctx context.Context, req models.LoginRequest) (*models.TokenResponse, error) {
+func (s *authService) Login(ctx context.Context, req models.LoginRequest, meta models.TokenMeta) (*models.TokenResponse, error) {
 	user, err := s.userRepo.GetUserByEmail(ctx, req.Email)
 	if err != nil {
 		return nil, err
@@ -95,11 +95,11 @@ func (s *authService) Login(ctx context.Context, req models.LoginRequest) (*mode
 		return nil, ErrInvalidCredentials
 	}
 
-	accessToken, err := s.signToken(user, accessTokenTTL, "access")
+	accessToken, err := s.signAccessToken(user)
 	if err != nil {
 		return nil, err
 	}
-	refreshToken, err := s.signToken(user, refreshTokenTTL, "refresh")
+	refreshToken, err := s.tokenService.IssueRefreshToken(ctx, user.ID, meta)
 	if err != nil {
 		return nil, err
 	}
@@ -108,9 +108,46 @@ func (s *authService) Login(ctx context.Context, req models.LoginRequest) (*mode
 	return &models.TokenResponse{AccessToken: accessToken, RefreshToken: refreshToken, TokenType: "Bearer", ExpiresIn: int64(accessTokenTTL.Seconds())}, nil
 }
 
-func (s *authService) signToken(user *models.User, ttl time.Duration, tokenType string) (string, error) {
+func (s *authService) Refresh(ctx context.Context, req models.RefreshTokenRequest, meta models.TokenMeta) (*models.TokenResponse, error) {
+	refreshToken, userID, err := s.tokenService.RotateRefreshToken(ctx, strings.TrimSpace(req.RefreshToken), meta)
+	if err != nil {
+		return nil, err
+	}
+
+	user, err := s.userRepo.GetUserByID(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	if user == nil || !user.IsActive {
+		return nil, ErrInvalidCredentials
+	}
+
+	accessToken, err := s.signAccessToken(user)
+	if err != nil {
+		return nil, err
+	}
+
+	return &models.TokenResponse{AccessToken: accessToken, RefreshToken: refreshToken, TokenType: "Bearer", ExpiresIn: int64(accessTokenTTL.Seconds())}, nil
+}
+
+func (s *authService) Logout(ctx context.Context, req models.LogoutRequest) error {
+	return s.tokenService.RevokeRefreshToken(ctx, strings.TrimSpace(req.RefreshToken))
+}
+
+func (s *authService) signAccessToken(user *models.User) (string, error) {
 	now := time.Now().UTC()
-	claims := models.JWTClaims{UserID: user.ID, RoleID: user.RoleID, BranchID: user.BranchID, Type: tokenType, RegisteredClaims: jwt.RegisteredClaims{IssuedAt: jwt.NewNumericDate(now), NotBefore: jwt.NewNumericDate(now), ExpiresAt: jwt.NewNumericDate(now.Add(ttl)), Subject: user.ID}}
+	claims := models.JWTClaims{
+		UserID:   user.ID,
+		RoleID:   user.RoleID,
+		BranchID: user.BranchID,
+		Type:     "access",
+		RegisteredClaims: jwt.RegisteredClaims{
+			IssuedAt:  jwt.NewNumericDate(now),
+			NotBefore: jwt.NewNumericDate(now),
+			ExpiresAt: jwt.NewNumericDate(now.Add(accessTokenTTL)),
+			Subject:   user.ID,
+		},
+	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	return token.SignedString(s.jwtSecret)
 }

@@ -7,10 +7,14 @@ import (
 )
 
 func RegisterAuthRoutes(router *gin.Engine, authHandler *handlers.AuthHandler, jwtMiddleware gin.HandlerFunc) {
-	authGroup := router.Group("/auth")
-	{
-		authGroup.POST("/register", authHandler.Register)
-		authGroup.POST("/login", authHandler.Login)
-		authGroup.GET("/me", jwtMiddleware, authHandler.Me)
-	}
+	registerAuthGroup(router.Group("/auth"), authHandler, jwtMiddleware)
+	registerAuthGroup(router.Group("/api/auth"), authHandler, jwtMiddleware)
+}
+
+func registerAuthGroup(group *gin.RouterGroup, authHandler *handlers.AuthHandler, jwtMiddleware gin.HandlerFunc) {
+	group.POST("/register", authHandler.Register)
+	group.POST("/login", authHandler.Login)
+	group.POST("/refresh", authHandler.Refresh)
+	group.POST("/logout", authHandler.Logout)
+	group.GET("/me", jwtMiddleware, authHandler.Me)
 }

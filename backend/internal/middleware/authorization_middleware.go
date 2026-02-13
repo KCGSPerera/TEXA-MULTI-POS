@@ -41,6 +41,30 @@ func (m *AuthorizationMiddleware) RequireRole(roleName string) gin.HandlerFunc {
 	}
 }
 
+func (m *AuthorizationMiddleware) RequirePermission(permissionCode string) gin.HandlerFunc {
+	required := strings.TrimSpace(permissionCode)
+
+	return func(c *gin.Context) {
+		roleID := c.GetString("role_id")
+		if roleID == "" {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "missing role in token context"})
+			return
+		}
+
+		ok, err := m.roleRepo.HasPermission(c.Request.Context(), roleID, required)
+		if err != nil {
+			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "failed to resolve user permissions"})
+			return
+		}
+		if !ok {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "insufficient permissions"})
+			return
+		}
+
+		c.Next()
+	}
+}
+
 func (m *AuthorizationMiddleware) RequireBranchMatch(paramName string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		jwtBranchID := c.GetString("branch_id")

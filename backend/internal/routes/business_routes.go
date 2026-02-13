@@ -43,5 +43,5 @@ func RegisterBusinessRoutes(router *gin.Engine, authz *middleware.AuthorizationM
 	branchGroup.PUT("/customers/:id", middleware.ValidateUUIDParams("id"), h.CustomerHandler.Update)
 	branchGroup.DELETE("/customers/:id", middleware.ValidateUUIDParams("id"), authz.RequireRole("admin"), h.CustomerHandler.Delete)
 
-	branchGroup.POST("/sales", h.SaleHandler.Create)
+	branchGroup.POST("/sales", authz.RequirePermission("sale.create"), h.SaleHandler.Create)
 }

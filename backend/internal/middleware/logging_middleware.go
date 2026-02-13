@@ -14,6 +14,7 @@ func RequestLoggerMiddleware() gin.HandlerFunc {
 		c.Next()
 
 		logger.L().Info().
+			Str("request_id", c.GetString("request_id")).
 			Str("method", c.Request.Method).
 			Str("path", c.Request.URL.Path).
 			Int("status", c.Writer.Status()).

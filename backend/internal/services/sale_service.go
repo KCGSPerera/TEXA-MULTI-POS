@@ -11,8 +11,10 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/kcgsperera/texa-multi-pos/backend/internal/database"
+	"github.com/kcgsperera/texa-multi-pos/backend/internal/discount"
 	"github.com/kcgsperera/texa-multi-pos/backend/internal/logger"
 	"github.com/kcgsperera/texa-multi-pos/backend/internal/models"
+	"github.com/kcgsperera/texa-multi-pos/backend/internal/observability"
 	"github.com/kcgsperera/texa-multi-pos/backend/internal/repositories"
 )
 
@@ -26,6 +28,9 @@ type saleService struct {
 	saleRepo      repositories.SaleRepository
 	productRepo   repositories.ProductRepository
 	inventoryRepo repositories.InventoryRepository
+	discountRepo  repositories.DiscountRepository
+	loyaltySvc    LoyaltyService
+	ledgerSvc     LedgerService
 	auditService  AuditService
 }
 
@@ -34,9 +39,12 @@ func NewSaleService(
 	saleRepo repositories.SaleRepository,
 	productRepo repositories.ProductRepository,
 	inventoryRepo repositories.InventoryRepository,
+	discountRepo repositories.DiscountRepository,
+	loyaltySvc LoyaltyService,
+	ledgerSvc LedgerService,
 	auditService AuditService,
 ) SaleService {
-	s := &saleService{db: db, saleRepo: saleRepo, productRepo: productRepo, inventoryRepo: inventoryRepo, auditService: auditService}
+	s := &saleService{db: db, saleRepo: saleRepo, productRepo: productRepo, inventoryRepo: inventoryRepo, discountRepo: discountRepo, loyaltySvc: loyaltySvc, ledgerSvc: ledgerSvc, auditService: auditService}
 	s.txRunner = func(ctx context.Context, fn func(pgx.Tx) error) error {
 		return database.WithTx(ctx, db, fn)
 	}
@@ -64,15 +72,7 @@ func (s *saleService) Create(ctx context.Context, branchID, userID string, req m
 		}
 	}
 
-	paymentTotal := 0.0
-	for _, payment := range req.Payments {
-		paymentTotal += payment.Amount
-	}
-	if math.Abs(paymentTotal-req.NetAmount) > 0.01 {
-		return nil, ErrInvalidPaymentTotal
-	}
-
-	sale := &models.Sale{BranchID: branchID, UserID: userID, TotalAmount: req.TotalAmount, VATAmount: req.VATAmount, DiscountAmount: req.DiscountAmount, NetAmount: req.NetAmount, IdempotencyKey: idemKey}
+	itemLevelDiscount := 0.0
 	items := make([]models.SaleItem, 0, len(req.Items))
 	for _, item := range req.Items {
 		exists, err := s.productRepo.ExistsActiveInBranch(ctx, branchID, item.ProductID)
@@ -82,15 +82,50 @@ func (s *saleService) Create(ctx context.Context, branchID, userID string, req m
 		if !exists {
 			return nil, ErrInvalidInput
 		}
+		itemLevelDiscount += item.ItemDiscountAmount
 		items = append(items, models.SaleItem{ProductID: item.ProductID, Quantity: item.Quantity, UnitPrice: item.UnitPrice, VATAmount: item.VATAmount, LineTotal: item.LineTotal})
 	}
+
+	rules, err := s.discountRepo.GetActiveRulesByIDs(ctx, branchID, req.DiscountRuleIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	breakdown := discount.Calculate(req.TotalAmount, itemLevelDiscount, rules, req.LoyaltyRedeemPoints)
+	discountAmount := breakdown.Total
+	if discountAmount > req.TotalAmount {
+		discountAmount = req.TotalAmount
+	}
+
+	netAmount := (req.TotalAmount - discountAmount) + req.VATAmount
+	if netAmount < 0 {
+		netAmount = 0
+	}
+
+	paymentTotal := 0.0
 	payments := make([]models.SalePayment, 0, len(req.Payments))
 	for _, payment := range req.Payments {
+		paymentTotal += payment.Amount
 		payments = append(payments, models.SalePayment{PaymentMethod: strings.ToUpper(payment.PaymentMethod), Amount: payment.Amount})
+	}
+	if math.Abs(paymentTotal-netAmount) > 0.01 {
+		return nil, ErrInvalidPaymentTotal
+	}
+
+	sale := &models.Sale{
+		BranchID:         branchID,
+		UserID:           userID,
+		CustomerID:       req.CustomerID,
+		TotalAmount:      req.TotalAmount,
+		VATAmount:        req.VATAmount,
+		DiscountAmount:   discountAmount,
+		NetAmount:        netAmount,
+		IdempotencyKey:   idemKey,
+		AppliedDiscounts: breakdown.Applied,
 	}
 
 	var createdSale *models.Sale
-	err := s.txRunner(ctx, func(tx pgx.Tx) error {
+	err = s.txRunner(ctx, func(tx pgx.Tx) error {
 		var err error
 		createdSale, err = s.saleRepo.CreateSaleTx(ctx, tx, sale)
 		if err != nil {
@@ -113,6 +148,9 @@ func (s *saleService) Create(ctx context.Context, branchID, userID string, req m
 		}
 		createdPayments, err := s.saleRepo.CreateSalePaymentsTx(ctx, tx, createdSale.ID, payments)
 		if err != nil {
+			return err
+		}
+		if err := s.discountRepo.CreateSaleDiscountsTx(ctx, tx, createdSale.ID, breakdown.Applied); err != nil {
 			return err
 		}
 
@@ -144,8 +182,33 @@ func (s *saleService) Create(ctx context.Context, branchID, userID string, req m
 			}
 		}
 
+		if createdSale.CustomerID != nil && req.LoyaltyRedeemPoints > 0 {
+			if err := s.loyaltySvc.RedeemTx(ctx, tx, *createdSale.CustomerID, branchID, createdSale.ID, req.LoyaltyRedeemPoints); err != nil {
+				return err
+			}
+		}
+		if createdSale.CustomerID != nil {
+			if err := s.loyaltySvc.EarnForSaleTx(ctx, tx, *createdSale.CustomerID, branchID, createdSale.ID, createdSale.NetAmount); err != nil {
+				return err
+			}
+		}
+
+		revenueAmount := createdSale.TotalAmount - createdSale.DiscountAmount
+		if revenueAmount < 0 {
+			revenueAmount = 0
+		}
+		if err := s.ledgerSvc.PostByCodes(ctx, tx, branchID, "SALE", createdSale.ID, []LedgerLineByCode{
+			{AccountCode: "CASH", Debit: createdSale.NetAmount, Credit: 0},
+			{AccountCode: "REVENUE", Debit: 0, Credit: revenueAmount},
+			{AccountCode: "VAT_PAYABLE", Debit: 0, Credit: createdSale.VATAmount},
+		}, &userID); err != nil {
+			return err
+		}
+
 		createdSale.Items = items
 		createdSale.Payments = createdPayments
+		createdSale.AppliedDiscounts = breakdown.Applied
+
 		if err := s.auditService.Log(ctx, tx, "sales", createdSale.ID, "CREATE", &userID, nil, createdSale); err != nil {
 			return err
 		}
@@ -155,6 +218,7 @@ func (s *saleService) Create(ctx context.Context, branchID, userID string, req m
 		return nil, err
 	}
 
-	logger.L().Info().Str("branch_id", branchID).Str("user_id", userID).Str("entity_id", createdSale.ID).Str("action", "sale_create").Msg("sale_create")
+	observability.IncSaleCreate()
+	logger.L().Info().Str("branch_id", branchID).Str("user_id", userID).Str("entity_id", createdSale.ID).Str("action", "sale_create").Interface("discount_breakdown", createdSale.AppliedDiscounts).Msg("sale_create")
 	return createdSale, nil
 }

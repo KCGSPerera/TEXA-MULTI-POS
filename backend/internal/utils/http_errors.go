@@ -19,6 +19,8 @@ func MapServiceError(err error) (int, string) {
 		return http.StatusConflict, err.Error()
 	case errors.Is(err, services.ErrForbiddenOperation):
 		return http.StatusForbidden, err.Error()
+	case errors.Is(err, services.ErrLedgerImbalance):
+		return http.StatusBadRequest, err.Error()
 	default:
 		return http.StatusInternalServerError, "internal server error"
 	}

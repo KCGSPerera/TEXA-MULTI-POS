@@ -15,6 +15,7 @@ type UserRepository interface {
 	BranchExists(ctx context.Context, branchID string) (bool, error)
 	RoleExists(ctx context.Context, roleID string) (bool, error)
 	GetUserByEmail(ctx context.Context, email string) (*models.User, error)
+	GetUserByID(ctx context.Context, userID string) (*models.User, error)
 	CreateUser(ctx context.Context, input models.CreateUserInput) (*models.User, error)
 }
 
@@ -56,9 +57,23 @@ func (r *userRepository) GetUserByEmail(ctx context.Context, email string) (*mod
 		FROM users
 		WHERE email = $1
 	`
+	return r.getByQuery(ctx, query, strings.ToLower(strings.TrimSpace(email)))
+}
 
+func (r *userRepository) GetUserByID(ctx context.Context, userID string) (*models.User, error) {
+	const query = `
+		SELECT id, branch_id, role_id, name, email, password_hash, mobile_number,
+		       secondary_mobile_number, nic, is_active, created_at, updated_at,
+		       created_by, updated_by
+		FROM users
+		WHERE id = $1
+	`
+	return r.getByQuery(ctx, query, userID)
+}
+
+func (r *userRepository) getByQuery(ctx context.Context, query string, arg string) (*models.User, error) {
 	user := &models.User{}
-	err := r.db.QueryRow(ctx, query, strings.ToLower(strings.TrimSpace(email))).Scan(
+	err := r.db.QueryRow(ctx, query, arg).Scan(
 		&user.ID,
 		&user.BranchID,
 		&user.RoleID,

@@ -27,11 +27,12 @@ type purchaseService struct {
 	supplierRepo  repositories.SupplierRepository
 	productRepo   repositories.ProductRepository
 	inventoryRepo repositories.InventoryRepository
+	ledgerSvc     LedgerService
 	auditService  AuditService
 }
 
-func NewPurchaseService(db *pgxpool.Pool, purchaseRepo repositories.PurchaseRepository, supplierRepo repositories.SupplierRepository, productRepo repositories.ProductRepository, inventoryRepo repositories.InventoryRepository, auditService AuditService) PurchaseService {
-	s := &purchaseService{db: db, purchaseRepo: purchaseRepo, supplierRepo: supplierRepo, productRepo: productRepo, inventoryRepo: inventoryRepo, auditService: auditService}
+func NewPurchaseService(db *pgxpool.Pool, purchaseRepo repositories.PurchaseRepository, supplierRepo repositories.SupplierRepository, productRepo repositories.ProductRepository, inventoryRepo repositories.InventoryRepository, ledgerSvc LedgerService, auditService AuditService) PurchaseService {
+	s := &purchaseService{db: db, purchaseRepo: purchaseRepo, supplierRepo: supplierRepo, productRepo: productRepo, inventoryRepo: inventoryRepo, ledgerSvc: ledgerSvc, auditService: auditService}
 	s.txRunner = func(ctx context.Context, fn func(pgx.Tx) error) error {
 		return database.WithTx(ctx, db, fn)
 	}
@@ -170,6 +171,12 @@ func (s *purchaseService) ApproveGRN(ctx context.Context, branchID, userID, grnI
 			return err
 		}
 		if err := s.purchaseRepo.RecalculatePOStatusTx(ctx, tx, grn.PurchaseOrderID); err != nil {
+			return err
+		}
+		if err := s.ledgerSvc.PostByCodes(ctx, tx, branchID, "GRN", grn.ID, []LedgerLineByCode{
+			{AccountCode: "INVENTORY", Debit: grn.TotalAmount, Credit: 0},
+			{AccountCode: "PAYABLE", Debit: 0, Credit: grn.TotalAmount},
+		}, &userID); err != nil {
 			return err
 		}
 		grn.Status = "COMPLETED"

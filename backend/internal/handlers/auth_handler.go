@@ -40,7 +40,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		respondError(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	res, err := h.authService.Login(c.Request.Context(), req)
+	res, err := h.authService.Login(c.Request.Context(), req, models.TokenMeta{UserAgent: c.Request.UserAgent(), IPAddress: c.ClientIP()})
 	if err != nil {
 		switch {
 		case errors.Is(err, services.ErrInvalidCredentials):
@@ -53,6 +53,43 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 	respondSuccess(c, http.StatusOK, res)
+}
+
+func (h *AuthHandler) Refresh(c *gin.Context) {
+	var req models.RefreshTokenRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		respondError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	res, err := h.authService.Refresh(c.Request.Context(), req, models.TokenMeta{UserAgent: c.Request.UserAgent(), IPAddress: c.ClientIP()})
+	if err != nil {
+		if errors.Is(err, services.ErrInvalidRefreshToken) {
+			respondError(c, http.StatusUnauthorized, "invalid refresh token")
+			return
+		}
+		respondMappedError(c, err, "failed to refresh token")
+		return
+	}
+	respondSuccess(c, http.StatusOK, res)
+}
+
+func (h *AuthHandler) Logout(c *gin.Context) {
+	var req models.LogoutRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		respondError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	if err := h.authService.Logout(c.Request.Context(), req); err != nil {
+		if errors.Is(err, services.ErrInvalidRefreshToken) {
+			respondError(c, http.StatusUnauthorized, "invalid refresh token")
+			return
+		}
+		respondMappedError(c, err, "failed to logout")
+		return
+	}
+	respondNoContent(c)
 }
 
 func (h *AuthHandler) Me(c *gin.Context) {

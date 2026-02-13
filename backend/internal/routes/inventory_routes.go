@@ -13,5 +13,5 @@ func RegisterInventoryRoutes(router *gin.Engine, authz *middleware.Authorization
 
 	group.GET("", h.List)
 	group.GET("/:product_id", middleware.ValidateUUIDParams("product_id"), h.GetByProduct)
-	group.POST("/adjust", authz.RequireRole("admin"), h.Adjust)
+	group.POST("/adjust", authz.RequireRole("admin"), authz.RequirePermission("inventory.adjust"), h.Adjust)
 }

@@ -123,17 +123,19 @@ type UpdateCustomerRequest struct {
 }
 
 type Sale struct {
-	ID             string        `json:"id"`
-	BranchID       string        `json:"branch_id"`
-	UserID         string        `json:"user_id"`
-	TotalAmount    float64       `json:"total_amount"`
-	VATAmount      float64       `json:"vat_amount"`
-	DiscountAmount float64       `json:"discount_amount"`
-	NetAmount      float64       `json:"net_amount"`
-	CreatedAt      time.Time     `json:"created_at"`
-	IdempotencyKey *string       `json:"idempotency_key,omitempty"`
-	Items          []SaleItem    `json:"items"`
-	Payments       []SalePayment `json:"payments"`
+	ID               string            `json:"id"`
+	BranchID         string            `json:"branch_id"`
+	UserID           string            `json:"user_id"`
+	CustomerID       *string           `json:"customer_id,omitempty"`
+	TotalAmount      float64           `json:"total_amount"`
+	VATAmount        float64           `json:"vat_amount"`
+	DiscountAmount   float64           `json:"discount_amount"`
+	NetAmount        float64           `json:"net_amount"`
+	CreatedAt        time.Time         `json:"created_at"`
+	IdempotencyKey   *string           `json:"idempotency_key,omitempty"`
+	Items            []SaleItem        `json:"items"`
+	AppliedDiscounts []AppliedDiscount `json:"applied_discounts,omitempty"`
+	Payments         []SalePayment     `json:"payments"`
 }
 
 type SaleItem struct {
@@ -154,11 +156,12 @@ type SalePayment struct {
 }
 
 type CreateSaleItemRequest struct {
-	ProductID string  `json:"product_id" binding:"required,uuid"`
-	Quantity  float64 `json:"quantity" binding:"required,gt=0"`
-	UnitPrice float64 `json:"unit_price" binding:"required,gte=0"`
-	VATAmount float64 `json:"vat_amount" binding:"required,gte=0"`
-	LineTotal float64 `json:"line_total" binding:"required,gte=0"`
+	ProductID          string  `json:"product_id" binding:"required,uuid"`
+	Quantity           float64 `json:"quantity" binding:"required,gt=0"`
+	UnitPrice          float64 `json:"unit_price" binding:"required,gte=0"`
+	VATAmount          float64 `json:"vat_amount" binding:"required,gte=0"`
+	LineTotal          float64 `json:"line_total" binding:"required,gte=0"`
+	ItemDiscountAmount float64 `json:"item_discount_amount" binding:"omitempty,gte=0"`
 }
 
 type CreateSalePaymentRequest struct {
@@ -167,11 +170,21 @@ type CreateSalePaymentRequest struct {
 }
 
 type CreateSaleRequest struct {
-	TotalAmount    float64                    `json:"total_amount" binding:"required,gte=0"`
-	VATAmount      float64                    `json:"vat_amount" binding:"required,gte=0"`
-	DiscountAmount float64                    `json:"discount_amount" binding:"required,gte=0"`
-	NetAmount      float64                    `json:"net_amount" binding:"required,gte=0"`
-	Items          []CreateSaleItemRequest    `json:"items" binding:"required,min=1,dive"`
-	Payments       []CreateSalePaymentRequest `json:"payments" binding:"required,min=1,dive"`
-	IdempotencyKey *string                    `json:"idempotency_key" binding:"omitempty,max=100"`
+	CustomerID          *string                    `json:"customer_id" binding:"omitempty,uuid"`
+	TotalAmount         float64                    `json:"total_amount" binding:"required,gte=0"`
+	VATAmount           float64                    `json:"vat_amount" binding:"required,gte=0"`
+	DiscountAmount      float64                    `json:"discount_amount" binding:"required,gte=0"`
+	NetAmount           float64                    `json:"net_amount" binding:"required,gte=0"`
+	Items               []CreateSaleItemRequest    `json:"items" binding:"required,min=1,dive"`
+	Payments            []CreateSalePaymentRequest `json:"payments" binding:"required,min=1,dive"`
+	DiscountRuleIDs     []string                   `json:"discount_rule_ids" binding:"omitempty,dive,uuid"`
+	LoyaltyRedeemPoints float64                    `json:"loyalty_redeem_points" binding:"omitempty,gte=0"`
+	IdempotencyKey      *string                    `json:"idempotency_key" binding:"omitempty,max=100"`
+}
+
+type AppliedDiscount struct {
+	DiscountRuleID *string `json:"discount_rule_id,omitempty"`
+	Name           string  `json:"name"`
+	Type           string  `json:"type"`
+	Amount         float64 `json:"amount"`
 }

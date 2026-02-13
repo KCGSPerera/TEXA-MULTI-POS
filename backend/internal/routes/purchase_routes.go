@@ -14,5 +14,5 @@ func RegisterPurchaseRoutes(router *gin.Engine, authz *middleware.AuthorizationM
 	group.GET("/purchase-orders", h.ListPurchaseOrders)
 	group.POST("/purchase-orders", h.CreatePurchaseOrder)
 	group.POST("/purchase-orders/:purchase_order_id/grns", middleware.ValidateUUIDParams("purchase_order_id"), h.CreateGRN)
-	group.POST("/grns/:grn_id/approve", middleware.ValidateUUIDParams("grn_id"), authz.RequireRole("admin"), h.ApproveGRN)
+	group.POST("/grns/:grn_id/approve", middleware.ValidateUUIDParams("grn_id"), authz.RequireRole("admin"), authz.RequirePermission("grn.approve"), h.ApproveGRN)
 }
